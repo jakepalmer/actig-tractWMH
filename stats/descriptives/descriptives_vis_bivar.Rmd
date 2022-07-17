@@ -1,0 +1,125 @@
+---
+title: "EDA and Descriptives"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup}
+base <- '/home/WMHactig'
+knitr::opts_knit$set(root.dir = normalizePath(base)) 
+```
+
+```{r message=FALSE, warning=FALSE}
+# Load packages
+library(reticulate)
+use_python("/usr/bin/python3", required = TRUE)
+library(ggpubr)
+library(ggExtra)
+library(fs)
+library(dplyr)
+library(tidyr)
+
+# Set directories
+scripts <- path(base, 'src')
+data_raw <- path(base, 'data', 'raw')
+data_processed <- path(base, 'data', 'processed')
+
+infile <- path(data_processed, "WMHactig_data_tmp.csv")
+```
+
+## Read in processed data
+Make sure tests from 'Data_Prep.Rmd' have been run to check assumptions about data.
+
+```{r message=FALSE, warning=FALSE}
+df <- read.csv(infile)
+```
+
+## Plot by MCI dx 
+
+```{r message=FALSE, warning=FALSE}
+clin_vars <- c(
+    'ATOS_age',
+    'ATOS_BMI',
+    'ATOS_GDS15',
+    'ATOS_vascular_risk_index',
+    'ATOS_PSQItot',
+    'ATOS_exercise',
+    'ATOS_MMSE'
+  )
+
+actig_vars <- c(
+    'ATOS_Actig_Standard_SE',
+    'ATOS_Actig_NonPar_IS',
+    'ATOS_Actig_NonPar_IV',
+	  'ATOS_Actig_NonPar_RA',
+    'ATOS_Actig_NonPar_L5',
+    'ATOS_L5_StartTime_recode',
+	  'ATOS_Actig_NonPar_M10'
+)
+
+vars <- c(clin_vars, actig_vars)
+
+for (var in vars) {
+	print(ggboxplot(df, x = 'MCI_Primary_recode', y = var, add = 'jitter', width = 0.5))
+}
+```
+
+## Plot actigraphy vs WMH
+
+```{r message=FALSE, warning=FALSE}
+wmh_vars <- c(
+    'ATOS_WholeBrainLesion_volume',
+    'ATOS_BSlesion_volume',
+    'ATOS_BiFLlesion_volume',
+    'ATOS_BiOLlesion_volume',
+    'ATOS_BiPLlesion_volume',
+    'ATOS_BiTLlesion_volume',
+    'biATR_volume',
+    'biCST_volume',
+    'biCG_volume',
+    'biSLF_I_volume'
+)
+
+actig_vars <- c(
+    'ATOS_Actig_Standard_SE',
+    'ATOS_Actig_NonPar_IS',
+    'ATOS_Actig_NonPar_IV',
+	  'ATOS_Actig_NonPar_RA',
+    'ATOS_Actig_NonPar_L5',
+    'ATOS_L5_StartTime_recode',
+	  'ATOS_Actig_NonPar_M10'
+)
+
+for (wmh in wmh_vars) {
+	for (actig in actig_vars) {
+		p <- ggscatter(df, x = wmh, y = actig,
+			   add = 'reg.line', conf.int = TRUE, add.params = list(color = 'blue', fill = 'lightgray'))
+		print(ggMarginal(p, type = 'boxplot'))
+	}
+}
+
+```
+
+## Plot WMH by scan type
+
+```{r message=FALSE, warning=FALSE}
+wmh_vars <- c(
+    'ATOS_WholeBrainLesion_volume',
+    'ATOS_BSlesion_volume',
+    'ATOS_BiFLlesion_volume',
+    'ATOS_BiOLlesion_volume',
+    'ATOS_BiPLlesion_volume',
+    'ATOS_BiTLlesion_volume',
+    'biATR_volume',
+    'biCST_volume',
+    'biCG_volume',
+    'biSLF_I_volume'
+)
+
+for (var in wmh_vars) {
+	print(ggboxplot(df, y = var, color = 'ATOS_scan_type', add = 'jitter', width = 0.5))
+}
+```
+
+

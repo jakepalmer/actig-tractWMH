@@ -1,0 +1,146 @@
+---
+title: "WML Actigraphy Logistic Models"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+## Description
+
+This document should be used to coordinate model fitting and generation of `.html` summaries defined in the file `logistic_models_base.R`.
+
+### Justification for selection of priors
+
+Weakly informative priors selected for IS, IV, RA, L5 and M10 based on previous literature, and also for BMI in follow-up models due to the well established link between vascular risk factors (such as BMI) with WML.
+
+Non-informative priors selected for L5 start time as previous studies have not included L5 start time and it is unclear *a-priori* whether later or earlier L5 onset would be related to WML volumes. Non-informative priors also chosen for sex as again, there is no clear evidence indicating the sex differences in WML. Non-informative priors also selected for scan-type as this is the first application of MS-GAN on 2D and 3D scans.
+
+Normal priors chosen rather than something with fatter tails (e.g. student's T distribution) as large parameter values are expected to be unlikely.
+
+## Setup
+
+```{r}
+library(fs)
+library(dplyr)
+library(rstanarm)
+
+# Set directories
+base <- '/home/WMHactig'
+scripts <- path(base, 'src')
+data_processed <- path(base, 'data', 'processed')
+stats_models <- path(base, 'stats', 'models')
+setwd(stats_models)
+
+# Function to render model summaries
+
+render_summary <- function(dv, iv, prior_loc, prior_scale, fname) {
+  rmarkdown::render(
+  	"logistic_models_base.R", 
+  	params = list(
+  	  dv = dv,
+  	  iv = iv,
+  	  prior_loc = prior_loc,
+  	  prior_scale = prior_scale
+  	  ),
+  	output_file = paste0("model_", fname, ".html")
+  )
+}
+```
+
+## Set dependent variables
+
+```{r}
+dvs <- c(
+  "biATR",
+  "biILF",
+  "biSLF_II",
+  "ATOS_WholeBrainLesion"
+)
+```
+
+## Fit models
+
+```{r}
+for (var in dvs) {
+  dv <- paste0(var, "_volume_bin_median")
+  prior_scale <- c(1, 1, 2.5, 2.5)
+  #####
+  # IS
+  #####
+  iv <- "ATOS_Actig_NonPar_IS_z + ATOS_age_z + ATOS_scan_type + Sex"
+  prior_loc <- c(-1, 1, 0, 0)
+  render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_IS"))
+  #####
+  # IV
+  #####
+  iv <- "ATOS_Actig_NonPar_IV_z + ATOS_age_z + ATOS_scan_type + Sex"
+  prior_loc <- c(1, 1, 0, 0)
+  render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_IV"))
+  #####
+  # RA
+  #####
+  iv <- "ATOS_Actig_NonPar_RA_z + ATOS_age_z + ATOS_scan_type + Sex"
+  prior_loc <- c(-1, 1, 0, 0)
+  render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_RA"))
+  #####
+  # L5
+  #####
+  iv <- "ATOS_Actig_NonPar_L5_z + ATOS_age_z + ATOS_scan_type + Sex"
+  prior_loc <- c(1, 1, 0, 0)
+  render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_L5"))
+  #####
+  # M10
+  #####
+  iv <- "ATOS_Actig_NonPar_M10_z + ATOS_age_z + ATOS_scan_type + Sex"
+  prior_loc <- c(-1, 1, 0, 0)
+  render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_M10"))
+  #####
+  # L5 start time
+  #####
+  iv <- "ATOS_L5_StartTime_recode_z + ATOS_age_z + ATOS_scan_type + Sex"
+  prior_loc <- c(0, 1, 0, 0)
+  render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_L5start"))
+}
+```
+
+## Follow-up models with BMI
+
+```{r}
+prior_scale <- c(1, 1, 2.5, 2.5, 1)
+
+#####
+# ATR
+#####
+dv <- "biATR_volume_bin_median"
+
+iv <- "ATOS_Actig_NonPar_IS_z + ATOS_age_z + ATOS_scan_type + Sex + ATOS_BMI_z"
+prior_loc <- c(-1, 1, 0, 0, 1)
+render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_IS_wBMI"))
+
+iv <- "ATOS_L5_StartTime_recode_z + ATOS_age_z + ATOS_scan_type + Sex + ATOS_BMI_z"
+prior_loc <- c(0, 1, 0, 0, 1)
+render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_L5start_wBMI"))
+
+#####
+# SLF-II
+#####
+dv <- "biSLF_II_volume_bin_median"
+
+iv <- "ATOS_L5_StartTime_recode_z + ATOS_age_z + ATOS_scan_type + Sex + ATOS_BMI_z"
+prior_loc <- c(0, 1, 0, 0, 1)
+render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_L5start_wBMI"))
+
+#####
+# Whole Brain
+#####
+dv <- "ATOS_WholeBrainLesion_volume_bin_median"
+
+iv <- "ATOS_Actig_NonPar_IS_z + ATOS_age_z + ATOS_scan_type + Sex + ATOS_BMI_z"
+prior_loc <- c(-1, 1, 0, 0, 1)
+render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_IS_wBMI"))
+
+iv <- "ATOS_Actig_NonPar_L5_z + ATOS_age_z + ATOS_scan_type + Sex + ATOS_BMI_z"
+prior_loc <- c(1, 1, 0, 0, 1)
+render_summary(dv, iv, prior_loc, prior_scale, paste0(var, "_L5_wBMI"))
+```
+

@@ -1,0 +1,715 @@
+---
+title: "WMH Actigraphy Data Prep"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+# Data Cleaning and Preparation
+Notebook for preparing imaging data and clinical data.
+
+Inclusion criteria:
+* FLAIR scan and actigraphy within 3 months
+* Aged >= 50
+* Actigraphy conditions (to decide)
+
+## Setup
+
+```{r}
+reticulate::repl_python()
+```
+
+```{python}
+import pandas as pd
+import numpy as np
+import os
+import collections
+from pathlib import Path
+from datetime import datetime
+from sklearn import preprocessing
+
+base = Path('/home/WMHactig')
+data_raw = base / 'data' / 'raw'
+data_processed = base / 'data' / 'processed'
+scripts = base / 'src'
+
+```
+
+## Functions
+
+```{python}
+def ATOS_calc(time_var, col):
+    """Get ATOS WMH and actig data. Appends to df."""
+    out_col = 'ATOS_' + col
+    in_BL = 'BL_' + col
+    in_LTFU1 = 'LTFU1_' + col
+    in_LTFU2 = 'LTFU2_' + col
+    for index, row in df.iterrows():
+        if row[time_var] == 1:
+            df.at[index, out_col] = df.at[index, in_BL]
+        elif row[time_var] == 2:
+            df.at[index, out_col] = df.at[index, in_LTFU1]
+        elif row[time_var] == 3:
+            df.at[index, out_col] = df.at[index, in_LTFU2]
+    return df
+
+
+def ATOS_clinical(time_var, out_col, in_BL, in_LTFU1, in_LTFU2):
+    """Get ATOS for a given variable. Appends to df."""
+    for index, row in df.iterrows():
+        if row[time_var] == 1:
+            df.at[index, out_col] = df.at[index, in_BL]
+        elif row[time_var] == 2:
+            df.at[index, out_col] = df.at[index, in_LTFU1]
+        elif row[time_var] == 3:
+            df.at[index, out_col] = df.at[index, in_LTFU2]
+    return df
+
+
+def recode_var(df, var, recode_dict):
+    """Basic format for recoding variables"""
+    df[var] = df[var].map(recode_dict)
+    return df
+
+
+def time_calc(times):
+    t = [str(x) for x in times]
+    t = [time.split(':') for time in t]
+    seconds = ((int(s) + int(m) * 60 + int(h) * 3600) for h, m, s in t)
+    seconds_list = [s for s in seconds]
+    seconds_list = [s + 86400 if s <= 43200 else s for s in seconds_list]
+    mins_list = [s/60 for s in seconds_list]
+    return mins_list
+
+
+def calc_curtail(df, var):
+    min_val = df[var].mean() - (3*(df[var].std()))
+    max_val = df[var].mean() + (3*(df[var].std()))
+    curt_var = var + '_curt'
+    df[curt_var] = df[var]
+    for index, row in df.iterrows():
+        if row[var] < min_val:
+            df.at[index, curt_var] = min_val
+        elif row[var] > max_val:
+            df.at[index, curt_var] = max_val
+
+
+def brain_vol_correction(var):
+    new_var = var + '_corr'
+    df[new_var] = (df[var]/df['ATOS_WholeBrainMask_volume'])*100
+    return df
+
+```
+
+## Read master file and get subset
+Get subset that have any actigraphy and any WMH data. Set option 'file' or 'spss'.
+
+```{python}
+read_from = 'file'
+if read_from == 'file':
+    print('Read data from file...')
+    os.chdir(data_processed)
+    df = pd.read_csv('WMHactig_data_12.05.2020.csv', low_memory=False)
+elif read_from == 'spss':
+    print('Read data from SPSS file...')
+    os.chdir(data_raw)
+    df_master = pd.read_spss("HBA_24.04.2020_BT.sav")
+    df = df_master.loc[(((df_master['Any_Actig'].str.contains('Yes')) & 
+        (df_master['BL_ScanDate'].notna())) |
+        (df_master['LTFU1_ScanDate'].notna())) |
+        (df_master['LTFU2_ScanDate'].notna())]
+    os.chdir(data_processed)
+else:
+    print('ERROR Invalid Option - options are file or spss')
+
+```
+
+## Rename actig variables
+Rename LTFU to LTFU1 for actig variables for ease later.
+
+```{python}
+df = df.rename(columns={
+  "LTFU_Actig_DOA" : "LTFU1_Actig_DOA",
+	"LTFU_Actig_Standard_OnsetTime" : "LTFU1_Actig_Standard_OnsetTime",
+	"LTFU_Actig_Standard_OnsetTime_Var" : "LTFU1_Actig_Standard_OnsetTime_Var",
+	"LTFU_Actig_Standard_OffsetTime" : "LTFU1_Actig_Standard_OffsetTime",
+	"LTFU_Actig_Standard_OffsetTime_Var" : "LTFU1_Actig_Standard_OffsetTime_Var",
+	"LTFU_Actig_Standard_TiB" : "LTFU1_Actig_Standard_TiB",
+	"LTFU_Actig_Standard_TiB_Var" : "LTFU1_Actig_Standard_TiB_Var",
+	"LTFU_Actig_Standard_TST" : "LTFU1_Actig_Standard_TST",
+	"LTFU_Actig_Standard_TST_Var" : "LTFU1_Actig_Standard_TST_Var",
+	"LTFU_Actig_Standard_Waketime" : "LTFU1_Actig_Standard_Waketime",
+	"LTFU_Actig_Standard_Waketime_Var" : "LTFU1_Actig_Standard_Waketime_Var",
+	"LTFU_Actig_Standard_WaketimePercent" : "LTFU1_Actig_Standard_WaketimePercent",
+	"LTFU_Actig_Standard_WaketimePercent_Var" : "LTFU1_Actig_Standard_WaketimePercent_Var",
+	"LTFU_Actig_Standard_Wakebouts" : "LTFU1_Actig_Standard_Wakebouts",
+	"LTFU_Actig_Standard_Wakebouts_Var" : "LTFU1_Actig_Standard_Wakebouts_Var",
+	"LTFU_Actig_Standard_ACtotal" : "LTFU1_Actig_Standard_ACtotal",
+	"LTFU_Actig_Standard_Days_Recorded" : "LTFU1_Actig_Standard_Days_Recorded",
+	"LTFU_Actig_Diary_SOL_Latency" : "LTFU1_Actig_Diary_SOL_Latency",
+	"LTFU_Actig_Diary_SOL_Latency_Var" : "LTFU1_Actig_Diary_SOL_Latency_Var",
+	"LTFU_Actig_Diary_SOL_Latency_Nights" : "LTFU1_Actig_Diary_SOL_Latency_Nights",
+	"LTFU_Actig_Standard_Percent_Missing" : "LTFU1_Actig_Standard_Percent_Missing",
+	"LTFU_Actig_Cosinor_Acrophase" : "LTFU1_Actig_Cosinor_Acrophase",
+	"LTFU_Actig_Cosinor_Amplitude" : "LTFU1_Actig_Cosinor_Amplitude",
+	"LTFU_Actig_Cosinor_SD" : "LTFU1_Actig_Cosinor_SD",
+	"LTFU_Actig_Cosinor_Mean" : "LTFU1_Actig_Cosinor_Mean",
+	"LTFU_Actig_Cosinor_Intercept" : "LTFU1_Actig_Cosinor_Intercept",
+	"LTFU_Actig_NonPar_IS" : "LTFU1_Actig_NonPar_IS",
+	"LTFU_Actig_NonPar_IV" : "LTFU1_Actig_NonPar_IV",
+	"LTFU_Actig_NonPar_RA" : "LTFU1_Actig_NonPar_RA",
+	"LTFU_Actig_NonPar_L5" : "LTFU1_Actig_NonPar_L5",
+	"LTFU_Actig_NonPar_L5_StartTime" : "LTFU1_Actig_NonPar_L5_StartTime",
+	"LTFU_Actig_NonPar_M10" : "LTFU1_Actig_NonPar_M10",
+	"LTFU_Actig_NonPar_M10_StartTime" : "LTFU1_Actig_NonPar_M10_StartTime",
+	"LTFU_Actig_NonPar_L5_Midpoint" : "LTFU1_Actig_NonPar_L5_Midpoint",
+	"LTFU_Actig_NonPar_M10_Midpoint" : "LTFU1_Actig_NonPar_M10_Midpoint"
+})
+
+```
+
+## Calculate ATOS variables
+Align clincal and actigraphy timepoint to scan timepoint.
+
+```{python}
+cols = ['BL_DOA', 'LTFU1_Date', 'LTFU2_Date', 'BL_Actig_DOA', 'LTFU1_Actig_DOA',
+        'LTFU2_Actig_DOA', 'BL_ScanDate', 'LTFU1_ScanDate', 'LTFU2_ScanDate']
+for col in cols:
+    df[col] = pd.to_datetime(df[col])
+
+# Calculate differences between scan and PSG at each time point
+df['BLscan_BLactig_diff'] = df['BL_ScanDate'] - df['BL_Actig_DOA']
+df['BLscan_LTFU1actig_diff'] = df['BL_ScanDate'] - df['LTFU1_Actig_DOA']
+df['BLscan_LTFU2actig_diff'] = df['BL_ScanDate'] - df['LTFU2_Actig_DOA']
+
+df['LTFU1scan_BLactig_diff'] = df['LTFU1_ScanDate'] - df['BL_Actig_DOA']
+df['LTFU1scan_LTFU1actig_diff'] = df['LTFU1_ScanDate'] - df['LTFU1_Actig_DOA']
+df['LTFU1scan_LTFU2actig_diff'] = df['LTFU1_ScanDate'] - df['LTFU2_Actig_DOA']
+
+df['LTFU2scan_BLactig_diff'] = df['LTFU2_ScanDate'] - df['BL_Actig_DOA']
+df['LTFU2scan_LTFU1actig_diff'] = df['LTFU2_ScanDate'] - df['LTFU1_Actig_DOA']
+df['LTFU2scan_LTFU2actig_diff'] = df['LTFU2_ScanDate'] - df['LTFU2_Actig_DOA']
+
+cols = ['BLscan_BLactig_diff', 'BLscan_LTFU1actig_diff', 'BLscan_LTFU2actig_diff', 'LTFU1scan_BLactig_diff',
+        'LTFU1scan_LTFU1actig_diff', 'LTFU1scan_LTFU2actig_diff', 'LTFU2scan_BLactig_diff',
+        'LTFU2scan_LTFU1actig_diff', 'LTFU2scan_LTFU2actig_diff']
+# Convert difference to days
+for col in cols:
+    df[col] = df[col].dt.days
+
+# Calculate differences between scan and clinical assessment at each time point
+df['BLscan_BLclin_diff'] = df['BL_ScanDate'] - df['BL_DOA']
+df['BLscan_LTFU1clin_diff'] = df['BL_ScanDate'] - df['LTFU1_Date']
+df['BLscan_LTFU2clin_diff'] = df['BL_ScanDate'] - df['LTFU2_Date']
+
+df['LTFU1scan_BLclin_diff'] = df['LTFU1_ScanDate'] - df['BL_DOA']
+df['LTFU1scan_LTFU1clin_diff'] = df['LTFU1_ScanDate'] - df['LTFU1_Date']
+df['LTFU1scan_LTFU2clin_diff'] = df['LTFU1_ScanDate'] - df['LTFU2_Date']
+
+df['LTFU2scan_BLclin_diff'] = df['LTFU2_ScanDate'] - df['BL_DOA']
+df['LTFU2scan_LTFU1clin_diff'] = df['LTFU2_ScanDate'] - df['LTFU1_Date']
+df['LTFU2scan_LTFU2clin_diff'] = df['LTFU2_ScanDate'] - df['LTFU2_Date']
+
+cols = ['BLscan_BLclin_diff', 'BLscan_LTFU1clin_diff', 'BLscan_LTFU2clin_diff', 'LTFU1scan_BLclin_diff',
+        'LTFU1scan_LTFU1clin_diff', 'LTFU1scan_LTFU2clin_diff', 'LTFU2scan_BLclin_diff',
+        'LTFU2scan_LTFU1clin_diff', 'LTFU2scan_LTFU2clin_diff']
+# Convert difference to days
+for col in cols:
+    df[col] = df[col].dt.days
+
+```
+
+Assign scan time point.
+
+```{python}
+# Assign scan time point
+for index, row in df.iterrows():
+    if -91 < row['LTFU2scan_LTFU2actig_diff'] < 91:
+        df.at[index, 'ATOS_LTFU2scan_LTFU2actig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'LTFU2_ScanDate']
+        df.at[index, 'scan_time_point'] = 3
+    elif -91 < row['LTFU2scan_LTFU1actig_diff'] < 91:
+        df.at[index, 'ATOS_LTFU2scan_LTFU1actig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'LTFU2_ScanDate']
+        df.at[index, 'scan_time_point'] = 3
+    elif -91 < row['LTFU2scan_BLactig_diff'] < 91:
+        df.at[index, 'ATOS_LTFU2scan_BLactig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'LTFU2_ScanDate']
+        df.at[index, 'scan_time_point'] = 3
+    elif -91 < row['LTFU1scan_LTFU2actig_diff'] < 91:
+        df.at[index, 'ATOS_LTFU1scan_LTFU2actig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'LTFU1_ScanDate']
+        df.at[index, 'scan_time_point'] = 2
+    elif -91 < row['LTFU1scan_LTFU1actig_diff'] < 91:
+        df.at[index, 'ATOS_LTFU1scan_LTFU1actig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'LTFU1_ScanDate']
+        df.at[index, 'scan_time_point'] = 2
+    elif -91 < row['LTFU1scan_BLactig_diff'] < 91:
+        df.at[index, 'ATOS_LTFU1scan_BLactig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'LTFU1_ScanDate']
+        df.at[index, 'scan_time_point'] = 2
+    elif -91 < row['BLscan_LTFU2actig_diff'] < 91:
+        df.at[index, 'ATOS_BLscan_LTFU2actig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'BL_ScanDate']
+        df.at[index, 'scan_time_point'] = 1
+    elif -91 < row['BLscan_LTFU1actig_diff'] < 91:
+        df.at[index, 'ATOS_BLscan_LTFU1actig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'BL_ScanDate']
+        df.at[index, 'scan_time_point'] = 1
+    elif -91 < row['BLscan_BLactig_diff'] < 91:
+        df.at[index, 'ATOS_BLscan_BLactig'] = 1
+        df.at[index, 'any_ATOS_actig'] = 1
+        df.at[index, 'ATOS_scan_date'] = df.at[index, 'BL_ScanDate']
+        df.at[index, 'scan_time_point'] = 1
+
+# Assign clinical time point
+for index, row in df.iterrows():
+    if -91 < row['BLscan_BLclin_diff'] < 91:
+        df.at[index, 'ATOS_BLscan_BLclin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'BL_DOA']
+    elif -91 < row['BLscan_LTFU1clin_diff'] < 91:
+        df.at[index, 'ATOS_BLscan_LTFU1clin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'LTFU1_Date']
+    elif -91 < row['BLscan_LTFU2clin_diff'] < 91:
+        df.at[index, 'ATOS_BLscan_LTFU2clin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'LTFU2_Date']
+    elif -91 < row['LTFU1scan_BLclin_diff'] < 91:
+        df.at[index, 'ATOS_LTFU1scan_BLclin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'BL_DOA']
+    elif -91 < row['LTFU1scan_LTFU1clin_diff'] < 91:
+        df.at[index, 'ATOS_LTFU1scan_LTFU1clin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'LTFU1_Date']
+    elif -91 < row['LTFU1scan_LTFU2clin_diff'] < 91:
+        df.at[index, 'ATOS_LTFU1scan_LTFU2clin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'LTFU2_Date']
+    elif -91 < row['LTFU2scan_BLclin_diff'] < 91:
+        df.at[index, 'ATOS_LTFU2scan_BLclin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'BL_DOA']
+    elif -91 < row['LTFU2scan_LTFU1clin_diff'] < 91:
+        df.at[index, 'ATOS_LTFU2scan_LTFU1clin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'LTFU1_Date']
+    elif -91 < row['LTFU2scan_LTFU2clin_diff'] < 91:
+        df.at[index, 'ATOS_LTFU2scan_LTFU2clin'] = 1
+        df.at[index, 'ATOS_clin_date'] = df.at[index, 'LTFU2_Date']
+
+```
+
+Create ATOS age.
+
+```{python}
+# Calculate ATOS age using difference between BL ax and scan time point
+for index, row in df.iterrows():
+    df.at[index, 'age'] = df.at[index, 'BL_age']
+    df.at[index, 'ATOS_age'] = df.at[index, 'BL_age']
+
+for index, row in df.iterrows():
+    if row['scan_time_point'] == 1:
+        df.at[index, 'age_calc'] = df.at[index, 'BLscan_BLclin_diff']/365
+    elif row['scan_time_point'] == 2:
+        df.at[index, 'age_calc'] = df.at[index, 'LTFU1scan_BLclin_diff']/365
+    elif row['scan_time_point'] == 3:
+        df.at[index, 'age_calc'] = df.at[index, 'LTFU2scan_BLclin_diff']/365
+
+df['ATOS_age'] = df['age_calc'] + df['age']
+
+# In case any timepoint DOA are missing, replace with BL_age (only affects 1 subj)
+df.ATOS_age.fillna(df.age, inplace=True)
+df['ATOS_age'] = df['ATOS_age'].round(0)
+
+```
+
+Create ATOS WMH and actigraphy variables.
+
+```{python}
+cols = ['ScanDate', 'scan_type', 'WholeBrainMask_voxels', 'WholeBrainMask_volume', 'WholeBrainLesion_voxels', 'WholeBrainLesion_volume', 'BSlesion_voxels', 'BSlesion_volume', 'Clesion_voxels', 'Clesion_volume', 'LFLlesion_voxels', 'LFLlesion_volume', 'LOLlesion_voxels', 'LOLlesion_volume', 'LPLlesion_voxels', 'LPLlesion_volume', 'LTLlesion_voxels', 'LTLlesion_volume', 'RFLlesion_voxels', 'RFLlesion_volume', 'ROLlesion_voxels', 'ROLlesion_volume', 'RPLlesion_voxels', 'RPLlesion_volume', 'RTLlesion_voxels', 'RTLlesion_volume', 'Actig_DOA', 'Actig_Standard_OnsetTime', 'Actig_Standard_OnsetTime_Var', 'Actig_Standard_OffsetTime', 'Actig_Standard_OffsetTime_Var', 'Actig_Standard_TiB', 'Actig_Standard_TiB_Var', 'Actig_Standard_TST', 'Actig_Standard_TST_Var', 'Actig_Standard_Waketime', 'Actig_Standard_Waketime_Var', 'Actig_Standard_WaketimePercent', 'Actig_Standard_WaketimePercent_Var', 'Actig_Standard_Wakebouts', 'Actig_Standard_Wakebouts_Var', 'Actig_Standard_ACtotal', 'Actig_Standard_Days_Recorded', 'Actig_Diary_SOL_Latency', 'Actig_Diary_SOL_Latency_Var', 'Actig_Diary_SOL_Latency_Nights', 'Actig_Standard_Percent_Missing', 'Actig_Cosinor_Acrophase', 'Actig_Cosinor_Amplitude', 'Actig_Cosinor_SD', 'Actig_Cosinor_Mean', 'Actig_Cosinor_Intercept', 'Actig_NonPar_IS', 'Actig_NonPar_IV', 'Actig_NonPar_RA', 'Actig_NonPar_L5', 'Actig_NonPar_L5_StartTime', 'Actig_NonPar_M10', 'Actig_NonPar_M10_StartTime', 'Actig_NonPar_L5_Midpoint', 'Actig_NonPar_M10_Midpoint']
+
+# For clinical variables, need to use scan timepoint as reference
+for col in cols:
+	df = ATOS_calc('scan_time_point', col)
+
+# Format scan date
+df['ATOS_scan_date'] = pd.to_datetime(df['ATOS_scan_date'])
+df['ATOS_scan_date'] = df['ATOS_scan_date'].dt.strftime('%d.%m.%Y')
+```
+
+## Create final processed file
+Select cases that meet following criteria:
+* Have ATOS_Actig (ATOS_Actig_DOA)
+* % missing actigraphy <10%
+* At least 7 days of actigraphy
+* Cosinor and non-parametric data
+
+### How limitations effect sample
+__A:__
+N = 84
+<10% missing and at least 14 days of actigraphy
+__B:__
+N = 153
+<15% missing and at least 7 days of actigraphy
+__C:__
+N = 131
+<10% missing and at least 7 days of actigraphy
+
+```{python}
+# OPTION C
+df = df.loc[(df['ATOS_Actig_DOA'].notna()) & (df['ATOS_Actig_Standard_Percent_Missing'] <= 10.00) & (df['ATOS_Actig_Standard_Days_Recorded'] >= 7.00) & (df['ATOS_Actig_Cosinor_Acrophase'] > 0.00)]
+
+# Also drop those with dx of dementia or missing diagnosis
+df = df.loc[(df['Diagnosis_cognitive'].notna()) & (df['Diagnosis_cognitive'] != 'Dementia, ?AD') & (df['Diagnosis_cognitive'] != 'Dementia, ?LewyB') & (df['Diagnosis_cognitive'] != 'dementia, mixed')]
+```
+
+## Add variable for those with DWI
+
+```{python}
+all_dwi_subj_file = 'subjects_dwi.txt'  
+with open(all_dwi_subj_file) as reader:
+    all_dwi_subj = reader.readlines()
+    all_dwi_subj = [x.strip() for x in all_dwi_subj]
+    reader.close()
+
+df_dwi = pd.DataFrame(all_dwi_subj, columns=['ABC_ID'])
+df_dwi['has_dwi'] = 1
+
+# Merge subjects df with main file
+df = df.merge(df_dwi, how='left', on='ABC_ID')
+```
+
+## Add tract level WMH volumes and sienax scaling factors
+**Completed with code in src/master_workflow.py**
+
+## Write output
+
+```{python}
+outfile = 'WMHactig_data.csv'
+df.to_csv(outfile, header=True, index=False)
+```
+
+-------------- Break point for adding or modifying variables --------------
+
+## Create ATOS clinical variables
+
+```{python}
+os.chdir(data_processed)
+df = pd.read_csv('WMHactig_data.csv', low_memory=False)
+```
+
+```{python}
+# For clinical variables, need to use scan timepoint as reference
+df = ATOS_clinical('scan_time_point', 'ATOS_HAMDtot','BL_hamtot', 'LTFU1_hamtot', 'LTFU2_hamtot')
+df = ATOS_clinical('scan_time_point', 'ATOS_MMSE','BL_MMSE', 'LTFU1_MMSE', 'LTFU2_MMSE')
+df = ATOS_clinical('scan_time_point', 'ATOS_GDS15','bl_GDS_total_15_item', 'LTFU1_GDS15', 'LTFU2_GDS_15')
+df = ATOS_clinical('scan_time_point', 'ATOS_GDS30','BL_GDS_total_30_item', 'LTFU1_GDS_total', 'LTFU2_GDS_total')
+df = ATOS_clinical('scan_time_point', 'ATOS_BMI', 'BL_BMI', 'LTFU1_BMI', 'LTFU2_BMI')
+df = ATOS_clinical('scan_time_point', 'ATOS_BMI', 'BL_BMI', 'LTFU1_BMI', 'LTFU2_BMI')
+df = ATOS_clinical('scan_time_point', 'ATOS_hbp', 'BL_hbp', 'LTFU1_hbp', 'LTFU2_hbp')
+df = ATOS_clinical('scan_time_point', 'ATOS_chol', 'BL_cholest', 'LTFU1_cholest', 'LTFU2_cholest')
+df = ATOS_clinical('scan_time_point', 'ATOS_diab', 'BL_diabetes', 'LTFU1_diabetes', 'LTFU2_diabetes')
+df = ATOS_clinical('scan_time_point', 'ATOS_drinks_perday', 'BL_drinkday', 'LTFU1_drinksday', 'LTFU2_drinksday')
+df = ATOS_clinical('scan_time_point', 'ATOS_drinks_perwk', 'BL_etoh', 'LTFU1_etoh', 'LTFU2_etoh')
+df = ATOS_clinical('scan_time_point', 'ATOS_exercise_timevig', 'NewEx_BL_timevig', 'LTFU1_Nex5_vig', 'LTFU2_Nex5_vig')
+df = ATOS_clinical('scan_time_point', 'ATOS_exercise_timemod', 'NewEx_BL_timemod', 'LTFU1_Nex6_mod', 'LTFU2_Nex6_mod')
+df = ATOS_clinical('scan_time_point', 'ATOS_PSQItot', 'PSQITotal','LTFU1_PSQITotal', 'LTFU2_PSQITotal')
+
+cols = ['BL_heart_y_n', 'LTFU1_heart', 'LTFU2_heart', 'BL_smoke_ever', 'LTFU1_smoke_ever', 'LTFU2_smoke_ever']
+for col in cols:
+    df[col] = df[col].fillna('no')
+
+df = ATOS_clinical('scan_time_point', 'ATOS_heart', 'BL_heart_y_n', 'LTFU1_heart', 'LTFU2_heart')
+df = ATOS_clinical('scan_time_point', 'ATOS_smoke_ever', 'BL_smoke_ever', 'LTFU1_smoke_ever', 'LTFU2_smoke_ever')
+
+# Calculate exercise score
+df['ATOS_exercise'] = (df['ATOS_exercise_timevig'] * 2) + df['ATOS_exercise_timemod']
+
+# Dictionaries for recoding categorical cols
+cols = ['ATOS_heart', 'ATOS_hbp', 'ATOS_chol', 'ATOS_diab', 'ATOS_smoke_ever']
+for col in cols:
+    df[col] = df[col].fillna('no')
+
+vasc_recode_dict = {'yes': 1, 'no': 0}
+vasc_index_vars = ['ATOS_heart', 'ATOS_hbp', 'ATOS_chol', 'ATOS_diab', 'ATOS_smoke_ever']
+for var in vasc_index_vars:
+    df = recode_var(df, var, vasc_recode_dict)
+
+# Create vascular risk index (out of 5)
+df['ATOS_vascular_risk_index'] = df['ATOS_heart'] + df['ATOS_hbp'] + df['ATOS_chol'] + df['ATOS_diab'] + df['ATOS_smoke_ever']
+
+ATOS_SE = (df['ATOS_Actig_Standard_TST'] / df['ATOS_Actig_Standard_TiB'])*100
+df['ATOS_Actig_Standard_SE'] = ATOS_SE.round(2)
+
+# Recode sex
+sex_recode_dict = {'male': 1, 'female': 0}
+df['Sex_dummy'] = df['Sex'].map(sex_recode_dict)
+```
+
+## Recode times to continuous
+
+```{python}
+M10_start = df['ATOS_Actig_NonPar_M10_StartTime'].tolist()
+L5_start = df['ATOS_Actig_NonPar_L5_StartTime'].tolist()
+
+M10_start_mins = time_calc(M10_start)
+L5_start_mins = time_calc(L5_start)
+
+df['ATOS_M10_StartTime_recode'] = M10_start_mins
+df['ATOS_L5_StartTime_recode'] = L5_start_mins
+```
+
+## Drop any with ATOS MMSE < 24
+
+```{python}
+df = df.loc[df['ATOS_MMSE'] > 23]
+```
+
+## Recode clinical variables
+
+```{python}
+# Create new variable for MCI
+new_MCI_primary_dict = {'no_MCI':'noMCI', 'MCI_primary':'MCI', 'Control with MCI':'MCI'}
+df['MCI_Primary_recode'] = df['MCI_Primary_inclBA'].map(new_MCI_primary_dict)
+
+# Create dummy coded MCI variable
+dummy_MCI_primary_dict = {'noMCI': 1, 'MCI': 2}
+df['MCI_Primary_recode_dummy'] = df['MCI_Primary_recode'].map(dummy_MCI_primary_dict)
+```
+
+## Curtail variables as needed
+
+```{python}
+# Set max value if relevant
+for index, row in df.iterrows():
+    if row['ATOS_Actig_Standard_SE'] > 100.00:
+        df.at[index, 'ATOS_Actig_Standard_SE'] = 100.00
+
+cols = ['ATOS_Actig_Standard_SE', 'ATOS_Actig_NonPar_IS', 'ATOS_Actig_NonPar_IV',
+        'ATOS_Actig_NonPar_RA', 'ATOS_Actig_NonPar_L5', 'ATOS_L5_StartTime_recode',
+        'ATOS_Actig_NonPar_M10', 'ATOS_M10_StartTime_recode']
+
+for col in cols:
+    calc_curtail(df, col)
+
+```
+
+## Create bi-lateral tract level volumes
+
+```{python}
+df['biATR_volume'] = (df['ATR_left_volume'] + df['ATR_right_volume']) / 2
+df['biCST_volume'] = (df['CST_left_volume'] + df['CST_right_volume']) / 2
+df['biCG_volume'] = (df['CG_left_volume'] + df['CG_right_volume']) / 2
+df['biSLF_I_volume'] = (df['SLF_I_left_volume'] + df['SLF_I_right_volume']) / 2
+df['biT_PREF_volume'] = (df['T_PREF_left_volume'] + df['T_PREF_right_volume']) / 2
+df['biSLF_II_volume'] = (df['SLF_II_left_volume'] + df['SLF_II_right_volume']) / 2
+df['biSLF_III_volume'] = (df['SLF_III_left_volume'] + df['SLF_III_right_volume']) / 2
+df['biILF_volume'] = (df['ILF_left_volume'] + df['ILF_right_volume']) / 2
+df['biIFO_volume'] = (df['IFO_left_volume'] + df['IFO_right_volume']) / 2
+# Total SLF
+df['biSLFtot_volume'] = (df['SLF_I_left_volume'] + df['SLF_I_right_volume'] +
+                         df['SLF_II_left_volume'] + df['SLF_II_right_volume'] +
+                         df['SLF_III_left_volume'] + df['SLF_III_right_volume']) / 6
+```
+
+## Min-Max normalisation
+
+```{python}
+cols = [
+    # Clinical
+    'ATOS_age', 'ATOS_BMI', 'ATOS_GDS15', 'ATOS_vascular_risk_index', 'ATOS_exercise',
+    # Actig
+    'ATOS_Actig_Standard_SE', 'ATOS_Actig_NonPar_IS', 'ATOS_Actig_NonPar_IV',
+		'ATOS_Actig_NonPar_RA', 'ATOS_Actig_NonPar_L5', 'ATOS_L5_StartTime_recode',
+		'ATOS_Actig_NonPar_M10',
+		'ATOS_Actig_Standard_SE_curt', 'ATOS_Actig_NonPar_IS_curt', 'ATOS_Actig_NonPar_IV_curt',
+		'ATOS_Actig_NonPar_RA_curt', 'ATOS_Actig_NonPar_L5_curt', 'ATOS_L5_StartTime_recode_curt',
+		'ATOS_Actig_NonPar_M10_curt', 'ATOS_M10_StartTime_recode_curt',
+		# WMH vols
+		'ATOS_WholeBrainLesion_volume', 'ATOS_BSlesion_volume', 'ATOS_Clesion_volume','ATOS_LFLlesion_volume',
+		'ATOS_LOLlesion_volume', 'ATOS_LPLlesion_volume','ATOS_LTLlesion_volume',
+		'ATOS_RFLlesion_volume', 'ATOS_ROLlesion_volume', 'ATOS_RPLlesion_volume',
+		'ATOS_RTLlesion_volume', 'ATOS_BiFLlesion_volume','ATOS_BiOLlesion_volume',
+		'ATOS_BiPLlesion_volume', 'ATOS_BiTLlesion_volume',
+		'ATR_left_volume', 'CST_right_volume', 'ATR_right_volume', 'CG_left_volume', 'CG_right_volume',
+		'CST_left_volume', 'SLF_I_right_volume', 'SLF_I_left_volume',
+		'biATR_volume', 'biCST_volume', 'biCG_volume', 'biSLF_I_volume',
+		'biT_PREF_volume', 'biSLF_II_volume', 'biSLF_III_volume', 'biILF_volume',
+		'biSLFtot_volume', 'biIFO_volume'
+		]
+
+for col in cols:
+	new_norm = col + '_scaled'
+	x = df[[col]].values.astype(float)
+	min_max_scaler = preprocessing.MinMaxScaler()
+	df[new_norm] = min_max_scaler.fit_transform(x)
+
+```
+
+## Z-score normalisation
+
+```{python}
+cols = [
+    # Clinical
+    'ATOS_age', 'ATOS_BMI', 'ATOS_GDS15', 'ATOS_vascular_risk_index', 'ATOS_exercise',
+    # Actig
+    'ATOS_Actig_Standard_SE', 'ATOS_Actig_NonPar_IS', 'ATOS_Actig_NonPar_IV',
+		'ATOS_Actig_NonPar_RA', 'ATOS_Actig_NonPar_L5', 'ATOS_L5_StartTime_recode',
+		'ATOS_Actig_NonPar_M10',
+		'ATOS_Actig_Standard_SE_curt', 'ATOS_Actig_NonPar_IS_curt', 'ATOS_Actig_NonPar_IV_curt',
+		'ATOS_Actig_NonPar_RA_curt', 'ATOS_Actig_NonPar_L5_curt', 'ATOS_L5_StartTime_recode_curt',
+		'ATOS_Actig_NonPar_M10_curt', 'ATOS_M10_StartTime_recode_curt',
+		# WMH vols
+		'ATOS_WholeBrainLesion_volume', 'ATOS_BSlesion_volume', 'ATOS_Clesion_volume','ATOS_LFLlesion_volume',
+		'ATOS_LOLlesion_volume', 'ATOS_LPLlesion_volume','ATOS_LTLlesion_volume',
+		'ATOS_RFLlesion_volume', 'ATOS_ROLlesion_volume', 'ATOS_RPLlesion_volume',
+		'ATOS_RTLlesion_volume', 'ATOS_BiFLlesion_volume','ATOS_BiOLlesion_volume',
+		'ATOS_BiPLlesion_volume', 'ATOS_BiTLlesion_volume',
+		'ATR_left_volume', 'CST_right_volume', 'ATR_right_volume', 'CG_left_volume', 'CG_right_volume',
+		'CST_left_volume', 'SLF_I_right_volume', 'SLF_I_left_volume',
+		'biATR_volume', 'biCST_volume', 'biCG_volume', 'biSLF_I_volume',
+		'biT_PREF_volume', 'biSLF_II_volume', 'biSLF_III_volume', 'biILF_volume',
+		'biSLFtot_volume', 'biIFO_volume'
+		]
+
+for col in cols:
+	new_norm = col + '_z'
+	df[new_norm] = (df[col] - df[col].mean())/df[col].std(ddof=0)
+
+```
+
+## Binary tract-level WMH classification
+
+### Columns to classify
+
+```{python}
+cols = [
+  'ATOS_WholeBrainLesion_volume',
+  'biATR_volume',
+  'biCST_volume',
+  'biCG_volume',
+  'biSLF_I_volume',
+  'biT_PREF_volume',
+  'biSLF_II_volume',
+  'biSLF_III_volume',
+  'biILF_volume',
+  'biSLFtot_volume',
+  'biIFO_volume',
+  'ATOS_BiFLlesion_volume',
+  'ATOS_BiOLlesion_volume',
+  'ATOS_BiPLlesion_volume',
+  'ATOS_BiTLlesion_volume',
+  'ATOS_LFLlesion_volume',
+  'ATOS_RFLlesion_volume',
+  'ATOS_LOLlesion_volume',
+  'ATOS_ROLlesion_volume',
+  'ATOS_LPLlesion_volume',
+  'ATOS_RPLlesion_volume',
+  'ATOS_LTLlesion_volume',
+  'ATOS_RTLlesion_volume'
+  ]
+
+```
+
+### Median split
+
+```{python}
+for col in cols:
+    new_col = col + '_bin_median'
+    for index, row in df.iterrows():
+        if row[col] < df[col].median():
+            df.at[index, new_col] = 'Low'
+        else:
+            df.at[index, new_col] = 'High'
+
+```
+
+### Brainstem split
+Completed separately as 62 subj have 0.00 vol in brainstem meaning median split is invalid.
+
+```{python}
+for index, row in df.iterrows():
+    new_col = 'ATOS_BSlesion_volume' + '_bin_median'
+    if row['ATOS_BSlesion_volume'] == 0.00:
+        df.at[index, new_col] = 'Low'
+    else:
+        df.at[index, new_col] = 'High'
+
+```
+
+## Plot discrete WMH vol variables for ordinal regression
+
+```{python}
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+def cut(var, var_new, labels, q):
+    df[var_new] = pd.qcut(df[var], q=q, precision=0, labels = labels)
+    print(df[var_new].value_counts())
+    for label in labels:
+        subset = df[df[var_new] == label]
+        plt.figure(var)
+        sns.distplot(subset[var], hist=True, label=label, kde=False)
+    plt.show()
+    plt.clf()
+
+var = 'ATOS_BiBSlesion_volume_scaled'
+var_new = var + '_test'
+
+labels = ['low', 'high']
+cut(var, var_new, labels, 2)
+
+df.drop([var_new], axis=1, inplace=True)
+```
+
+-------------- Break point running tests --------------
+
+## Run tests against data set before analysis
+Check these after adding new variables.
+
+```{python}
+print('Checking...')
+try:
+  assert df['ABC_ID'].is_unique, 'ABC_ID includes non-unique values'
+  assert df['ATOS_ScanDate'].notnull().all(), 'Missing ATOS scan date'
+  assert df['ATOS_age'].notnull().all(), 'Missing ATOS age'
+  assert df['ATOS_age'].min() >= 50, 'ATOS age includes < 50'
+  assert df['ATOS_scan_type'].notnull().all(), 'Missing ATOS scan type'
+  assert df['ATOS_WholeBrainMask_volume'].notnull().all(), 'Missing ATOS brain mask volume'
+  for x in df['ATOS_scan_type']:
+    assert (x == '3D') or (x == '2D'), 'Invalid scan type present'
+  for x in df['MCI_Primary_recode']:
+    assert (x == 'noMCI') or (x == 'MCI'), 'Invalid cognitive diagnosis present'
+  assert df['ATOS_Actig_DOA'].notnull().all(), 'Missing ATOS actigraphy date'
+  assert df['ATOS_MMSE'].min() > 23, 'ATOS_MMSE < 23 present'
+  assert df['ATOS_Actig_Standard_Days_Recorded'].notnull().all(), 'Missing ATOS days recorded'
+  assert df['ATOS_Actig_Standard_Percent_Missing'].notnull().all(), 'Missing ATOS percent missing'
+  assert df['ATOS_Actig_Standard_Days_Recorded'].min() >= 7, 'ATOS_Actig_Standard_Days_Recorded includes < 7'
+  assert df['ATOS_Actig_Standard_Percent_Missing'].max() <= 10.00, 'ATOS_Actig_Standard_Percent_Missing includes > 10% missing'
+  assert df['ATOS_PSQItot'].max() <= 21, 'ATOS_PSQItot includes > max score'
+  assert df['ATOS_Actig_Standard_SE'].max() <= 100, 'ATOS_Actig_Standard_SE includes > 100% score'
+  assert df['ATOS_Actig_Standard_SE_curt'].max() <= 100, 'ATOS_Actig_Standard_SE_curt includes > 100% score'
+except AssertionError as error:
+  raise error
+else:
+  print('No errors raised...')
+
+```
+
+-------------- Break point for writing output after testing --------------
+
+## Write output
+
+```{python}
+outfile = 'WMHactig_data_tmp.csv'
+df.to_csv(outfile, header=True, index=False)
+```
+
+
+
+
+
+

@@ -1,0 +1,135 @@
+---
+title: "WMH Actigraphy Correlations"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+## Correlations
+
+```{r setup}
+knitr::opts_knit$set(root.dir = normalizePath('/home/WMHactig/data/processed')) 
+```
+
+### Load libraries and data
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(correlation)
+library(fs)
+library(BayesFactor)
+
+# Set directories
+base <- '/home/WMHactig'
+scripts <- path(base, 'src')
+data_raw <- path(base, 'data', 'raw')
+data_processed <- path(base, 'data', 'processed')
+setwd(data_processed)
+
+df <- read.csv("WMHactig_data.csv")
+```
+
+## Correlations
+### For correlation table in paper
+
+```{r}
+df %>% select(
+  # Clinical
+  'ATOS_age',
+  'ATOS_MMSE',
+  'ATOS_GDS15',
+  'ATOS_BMI',
+  'ATOS_exercise',
+  'ATOS_vascular_risk_index',
+  # Actig
+  'ATOS_Actig_Standard_SE',
+  'ATOS_Actig_Standard_Waketime',
+  'ATOS_Actig_NonPar_IS',
+  'ATOS_Actig_NonPar_IV',
+  'ATOS_Actig_NonPar_RA',
+  'ATOS_Actig_NonPar_L5',
+  'ATOS_Actig_NonPar_M10',
+  'ATOS_L5_StartTime_recode'
+	) %>%
+  correlation(p_adjust = 'none')
+```
+
+### Clinical and actigraphy correlations
+**NOTE:** No adjustment for multiple comparisons applied and printed correlations only showing those where p <= 0.10.
+
+```{r}
+df %>% select(
+  # Clinical
+  'ATOS_age',
+  'ATOS_MMSE',
+  'ATOS_GDS15',
+  'ATOS_PSQItot',
+  'ATOS_BMI',
+  'ATOS_exercise',
+  'ATOS_vascular_risk_index',
+  # Actig
+  'ATOS_Actig_NonPar_IS',
+  'ATOS_Actig_NonPar_IV',
+  'ATOS_Actig_NonPar_RA',
+  'ATOS_Actig_NonPar_L5',
+  'ATOS_L5_StartTime_recode',
+  'ATOS_Actig_NonPar_M10'
+	) %>%
+  correlation(p_adjust = 'none') %>%
+  subset(p <= 0.1, -c(Method, t, df))
+```
+
+### Actigraphy and WMH volume correlations
+**NOTE:** No adjustment for multiple comparisons applied and printed correlations only showing those where p <= 0.10.
+
+```{r}
+df %>% select(
+  # Actig
+  'ATOS_Actig_NonPar_IS',
+  'ATOS_Actig_NonPar_IV',
+  'ATOS_Actig_NonPar_RA',
+  'ATOS_Actig_NonPar_L5',
+  'ATOS_L5_StartTime_recode',
+  'ATOS_Actig_NonPar_M10',
+  # WMH
+  'ATOS_WholeBrainLesion_volume',
+  'ATR_left_volume',
+  'CST_right_volume',
+  'ATR_right_volume',
+  'CG_left_volume',
+  'CG_right_volume', 
+  'CST_left_volume',
+  'SLF_I_right_volume',
+  'SLF_I_left_volume'
+	) %>%
+  correlation(p_adjust = 'none') %>%
+  subset(p <= 0.1, -c(Method, t, df))
+```
+
+### Clinical and WMH volume correlations
+**NOTE:** No adjustment for multiple comparisons applied and printed correlations only showing those where p <= 0.10.
+
+```{r}
+df %>% select(
+  # Clinical
+  'ATOS_age',
+  'ATOS_MMSE',
+  'ATOS_GDS15',
+  'ATOS_PSQItot',
+  'ATOS_BMI',
+  'ATOS_exercise',
+  'ATOS_vascular_risk_index',
+  # WMH
+  'ATOS_WholeBrainLesion_volume',
+  'ATR_left_volume',
+  'CST_right_volume',
+  'ATR_right_volume',
+  'CG_left_volume',
+  'CG_right_volume', 
+  'CST_left_volume',
+  'SLF_I_right_volume',
+  'SLF_I_left_volume',
+	) %>%
+  correlation(p_adjust = 'none') %>%
+  subset(p <= 0.1, -c(Method, t, df))
+```
